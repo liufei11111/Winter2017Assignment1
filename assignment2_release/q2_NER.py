@@ -10,6 +10,7 @@ import data_utils.utils as du
 import data_utils.ner as ner
 from utils import data_iterator
 from model import LanguageModel
+from tensorflow.contrib import layers
 
 class Config(object):
   """Holds model hyperparams and data information.
@@ -92,7 +93,9 @@ class NERModel(LanguageModel):
     (Don't change the variable names)
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    self.input_placeholder = tf.placeholder(tf.int32, shape=(None,self.config.window_size))
+    self.labels_placeholder = tf.placeholder(tf.float32, shape=(None,self.config.label_size))
+    self.dropout_placeholder =tf.placeholder(tf.float32,[])
     ### END YOUR CODE
 
   def create_feed_dict(self, input_batch, dropout, label_batch=None):
@@ -117,9 +120,26 @@ class NERModel(LanguageModel):
       feed_dict: The feed dictionary mapping from placeholders to values.
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    if label_batch is None:
+      feed_dict = {
+        self.input_placeholder : input_batch,
+        self.dropout_placeholder : dropout
+      }
+    else:
+      feed_dict = {
+        self.input_placeholder : input_batch,
+        self.dropout_placeholder : dropout,
+        self.labels_placeholder : label_batch
+      }
+
     ### END YOUR CODE
     return feed_dict
+
+  def lookup_embedding_for_one_window(self, ids):
+
+    word_vectors = tf.nn.embedding_lookup(self.wv,ids)
+    # print 'lookup_embedding_for_one_window word_vectors:', word_vectors
+    return tf.to_float(tf.reshape(word_vectors,[-1]))
 
   def add_embedding(self):
     """Add embedding layer that maps from vocabulary to vectors.
@@ -148,7 +168,8 @@ class NERModel(LanguageModel):
     # The embedding lookup is currently only implemented for the CPU
     with tf.device('/cpu:0'):
       ### YOUR CODE HERE
-      raise NotImplementedError
+
+      window = tf.map_fn(self.lookup_embedding_for_one_window,self.input_placeholder, dtype=tf.float32, back_prop=False)
       ### END YOUR CODE
       return window
 
@@ -180,9 +201,25 @@ class NERModel(LanguageModel):
       output: tf.Tensor of shape (batch_size, label_size)
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    xavier_initializer = xavier_weight_init()
+    l2_regularizer = layers.l2_regularizer(self.config.l2)
+    with tf.variable_scope("Layer") as scope:
+      window = tf.nn.dropout(window, self.dropout_placeholder)
+      W = tf.get_variable("W",[self.config.window_size*self.config.embed_size, self.config.hidden_size], 
+        dtype=tf.float32, initializer=xavier_initializer, regularizer=l2_regularizer)
+      b1 = tf.get_variable("b1",[1,self.config.hidden_size], 
+        dtype=tf.float32, initializer=xavier_initializer)
+      h = tf.tanh(tf.matmul(window, W) + b1,name="h")
+    with tf.variable_scope("Softmax") as scope:
+      h = tf.nn.dropout(h, self.dropout_placeholder)
+      U = tf.get_variable("U",[self.config.hidden_size, self.config.label_size],
+        dtype=tf.float32, initializer=xavier_initializer, regularizer=l2_regularizer)
+      b2 = tf.get_variable("b2",[1, self.config.label_size],
+        dtype=tf.float32, initializer=xavier_initializer)
+      output = tf.matmul(h,U) +b2
+
     ### END YOUR CODE
-    return output 
+    return output
 
   def add_loss_op(self, y):
     """Adds cross_entropy_loss ops to the computational graph.
@@ -195,7 +232,10 @@ class NERModel(LanguageModel):
       loss: A 0-d tensor (scalar)
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.labels_placeholder, logits=y))
+    tf.losses.add_loss(cross_entropy_loss)
+    loss = tf.losses.get_total_loss(add_regularization_losses=True, name='total_loss')
+
     ### END YOUR CODE
     return loss
 
@@ -219,7 +259,7 @@ class NERModel(LanguageModel):
       train_op: The Op for training.
     """
     ### YOUR CODE HERE
-    raise NotImplementedError
+    train_op = tf.train.AdamOptimizer(self.config.lr).minimize(loss)
     ### END YOUR CODE
     return train_op
 
@@ -252,6 +292,7 @@ class NERModel(LanguageModel):
       data_iterator(orig_X, orig_y, batch_size=self.config.batch_size,
                    label_size=self.config.label_size, shuffle=shuffle)):
       feed = self.create_feed_dict(input_batch=x, dropout=dp, label_batch=y)
+      # print 'run_epoch feed: ', feed
       loss, total_correct, _ = session.run(
           [self.loss, self.correct_predictions, self.train_op],
           feed_dict=feed)
@@ -332,8 +373,8 @@ def test_NER():
   config = Config()
   with tf.Graph().as_default():
     model = NERModel(config)
-
-    init = tf.initialize_all_variables()
+# tf.global_variables_initializer
+    init = tf.global_variables_initializer()
     saver = tf.train.Saver()
 
     with tf.Session() as session:

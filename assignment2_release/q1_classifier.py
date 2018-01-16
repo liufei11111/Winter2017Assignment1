@@ -134,7 +134,7 @@ class SoftmaxModel(Model):
     ### YOUR CODE HERE
     name = None
     with tf.name_scope(name, "Q1") as scope:
-      b = tf.Variable(tf.zeros((self.config.batch_size, self.config.n_classes)))
+      b = tf.Variable(tf.zeros((1, self.config.n_classes)))
       W = tf.Variable(tf.zeros((self.config.n_features,self.config.n_classes)))
       linear_transformed = tf.add(tf.matmul(input_data,W), b)
       exponential = tf.exp(linear_transformed)
